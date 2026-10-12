@@ -81,6 +81,17 @@ func TestEntrypointRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestEntrypointRejectsInvalidArgumentsBeforeDatabase(t *testing.T) {
+	for _, args := range [][]string{{"api", "unknown"}, {"api", "migrate", "extra"}} {
+		t.Run(strings.Join(args[1:], "_"), func(t *testing.T) {
+			entrypointEnvironment(t)
+			// DATABASE_URL is absent: usage must fail before database setup.
+			os.Args = args
+			requireRunError(t, "usage: api [migrate|seed-demo|seed-load]")
+		})
+	}
+}
+
 func TestEntrypointRejectsUnavailableDatabase(t *testing.T) {
 	for _, period := range []string{"", "1s"} {
 		t.Run("health_period="+period, func(t *testing.T) {

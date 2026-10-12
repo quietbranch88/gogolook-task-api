@@ -20,7 +20,7 @@ import (
 	"github.com/quietbranch88/gogolook-task-api/internal/task"
 )
 
-// DB-01 exercises an actual PostgreSQL startup rejection through token
+// Exercises an actual PostgreSQL startup rejection through token
 // authentication, then the authenticated create/commit path after recovery.
 // The oracle is the storage-unavailable and tenant-scope HTTP contract, not a
 // fabricated driver error or an alternate copy of the application's schema.

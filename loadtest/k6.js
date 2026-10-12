@@ -83,7 +83,7 @@ export function mixed(ids) {
 }
 
 const scenarios = {
-  // PERF-01/02/03: 50 iterations/s mixed for 60 s at 3000 rows/tenant; thresholds below are the gate
+  // 50 mixed iterations/s for 60 s; the fixture defaults to 3000 tasks per tenant.
   slo: { s: { executor: 'constant-arrival-rate', rate: 50, timeUnit: '1s', duration: '60s', preAllocatedVUs: 20, maxVUs: 200, exec: 'mixed' } },
   // ceiling: open-model ramp 200 -> 2000 iterations/s
   ceiling: { s: { executor: 'ramping-arrival-rate', startRate: 200, timeUnit: '1s', preAllocatedVUs: 100, maxVUs: 400, exec: 'mixed',

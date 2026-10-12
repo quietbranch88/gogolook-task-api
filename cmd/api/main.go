@@ -101,8 +101,6 @@ func run() error {
 			return nil
 		case "seed-load":
 			return seedLoad(startup, pool)
-		default:
-			return errors.New("usage: api [migrate|seed-demo|seed-load]")
 		}
 	}
 	if err = postgres.SchemaReady(startup, pool); err != nil {

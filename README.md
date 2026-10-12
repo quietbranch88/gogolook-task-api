@@ -1,6 +1,6 @@
 # Gogolook task API
 
-This Go REST API implements the take-home's four task endpoints.
+[Browse the repository](https://github.com/quietbranch88/gogolook-task-api): this Go REST API implements the take-home's four task endpoints.
 I chose investigation checks for a scam-case review platform as the setting; task status records check completion.
 
 > **Reviewer note:** PUT requires the current `version` returned by POST/GET to prevent concurrent overwrites.
@@ -9,7 +9,7 @@ I chose investigation checks for a scam-case review platform as the setting; tas
 ## Run
 
 Install Docker with Compose v2 and BuildKit.
-Compose starts PostgreSQL 17.11 and the API in **demo mode; no Bearer token is needed**.
+Compose starts four services: PostgreSQL 17.11, migration, demo seed and API; **no Bearer token is needed**.
 Omit `Authorization` and `X-Tenant-ID`; running the image separately requires PostgreSQL 17+.
 ```sh
 docker compose up --build -d --wait
@@ -23,8 +23,12 @@ curl -i -X DELETE "http://localhost:8080/tasks/$TASK_ID"
 docker compose down # Keep data; add -v only to delete demo data.
 ```
 Use a fresh database for the initial schema; see [schema](docs/DESIGN.md#schema) before reusing an existing database.
+Test token mode with the [synthetic fixture](loadtest/README.md#token-mode); `seed-load` requires `-tags loadtest`.
 
 ## Test
+
+Install Go 1.26.9 for local commands. Compose supplies its own Go toolchain and runs race tests, not vet.
+The real-recovery test skips without a separate standby fixture; see [verification](docs/DESIGN.md#verified).
 
 ```sh
 go test ./... # Database tests skip without explicit opt-in.
@@ -35,6 +39,7 @@ docker compose --profile test run --rm tests # Real PostgreSQL and race detector
 ## Contract
 
 [OpenAPI](docs/openapi.yaml) defines the authoritative schemas and responses.
+Keep the encoded JSON body within 48 KiB. Missing/non-JSON Content-Type returns `415`; unknown fields return `400`.
 
 | Field | Rule |
 | --- | --- |

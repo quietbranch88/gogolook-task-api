@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/quietbranch88/gogolook-task-api/internal/task"
 	"net/http"
 	"net/http/httptest"
@@ -73,11 +75,11 @@ func TestHTTPInputRejection(t *testing.T) {
 		{"trailing JSON", `{"name":"a","status":0}{}`, "application/json", 400}, {"trailing junk", `{"name":"a","status":0}x`, "application/json", 400},
 		{"empty", "", "application/json", 400}, {"wrong media", `{}`, "text/plain", 415}, {"form media (what curl -d sends)", `{"name":"a","status":0}`, "application/x-www-form-urlencoded", 415}, {"missing media", `{"name":"a","status":0}`, "", 415},
 		{"unknown field", `{"name":"a","status":0,"tenant_id":2}`, "application/json", 400}, {"misspelled field", `{"name":"a","status":0,"detial":"x"}`, "application/json", 400}, {"body id", `{"id":9,"name":"a","status":0}`, "application/json", 400},
-		{"oversized", `{"name":"` + strings.Repeat("a", 17000) + `","status":0}`, "application/json", 413},
-		{"large trailing whitespace", `{"name":"a","status":0}` + strings.Repeat(" ", 17000), "application/json", 413},
+		{"oversized", `{"name":"` + strings.Repeat("a", 50<<10) + `","status":0}`, "application/json", 413},
+		{"large trailing whitespace", `{"name":"a","status":0}` + strings.Repeat(" ", 50<<10), "application/json", 413},
 		{"invalid UTF-8 name", "{\"name\":\"bad\xff\",\"status\":0}", "application/json", 400},
 		{"invalid UTF-8 detail", "{\"name\":\"ok\",\"status\":0,\"detail\":\"bad\xff\"}", "application/json", 400},
-		{"oversized invalid UTF-8", "{\"name\":\"\xff" + strings.Repeat("a", 17000) + "\",\"status\":0}", "application/json", 413},
+		{"oversized invalid UTF-8", "{\"name\":\"\xff" + strings.Repeat("a", 50<<10) + "\",\"status\":0}", "application/json", 413},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +100,42 @@ func TestHTTPInputRejection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHTTPDetailUnicodeLimits(t *testing.T) {
+	for _, method := range []string{"POST", "PUT"} {
+		for _, length := range []int{10000, 10001} {
+			t.Run(fmt.Sprintf("%s/%d_CJK_characters", method, length), func(t *testing.T) {
+				detail := strings.Repeat("界", length)
+				body := map[string]any{"name": "Unicode detail", "status": 0, "detail": detail}
+				path, want := "/tasks", 201
+				if method == "PUT" {
+					path, want = "/tasks/5", 200
+					body["version"] = 1
+				}
+				raw, err := json.Marshal(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s := &stub{}
+				h := New(task.NewService(s), s, true, func(context.Context) error { return nil })
+				w := request(h, method, path, string(raw), "application/json", nil)
+				if length == 10001 {
+					if w.Code != 400 || s.calls != 0 {
+						t.Fatalf("over-limit detail: status=%d calls=%d; want 400 before repository", w.Code, s.calls)
+					}
+					return
+				}
+				if w.Code != want || s.calls != 1 || s.in.Detail != detail {
+					t.Fatalf("valid CJK detail: status=%d calls=%d; want %d with intact input", w.Code, s.calls, want)
+				}
+				var result task.Task
+				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Detail != detail {
+					t.Fatalf("valid detail changed in HTTP response: %v", err)
+				}
+			})
+		}
 	}
 }
 func TestHTTPResponsesAndRoutes(t *testing.T) {
@@ -167,12 +205,15 @@ func TestSafeErrorResponses(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
 		code int
-	}{{task.ErrVersionConflict, 409}, {task.ErrForbidden, 403}, {task.ErrNotFound, 404}, {task.ErrUnauthorized, 401}, {task.ErrUnavailable, 503}, {task.ErrTimeout, 504}, {errors.New("password=secret SQL exception"), 500}} {
+	}{{task.ErrInvalid, 400}, {fmt.Errorf("secret foreign key constraint: %w", task.ErrInvalid), 400}, {task.ErrVersionConflict, 409}, {task.ErrForbidden, 403}, {task.ErrNotFound, 404}, {task.ErrUnauthorized, 401}, {task.ErrUnavailable, 503}, {task.ErrTimeout, 504}, {errors.New("password=secret SQL exception"), 500}} {
 		s := &stub{err: tc.err}
 		h := New(task.NewService(s), s, true, func(context.Context) error { return tc.err })
 		w := request(h, "GET", "/tasks", "", "", nil)
 		if w.Code != tc.code || strings.Contains(w.Body.String(), "secret") {
 			t.Fatalf("unsafe error: %d %s", w.Code, w.Body)
+		}
+		if tc.code == 400 && w.Body.String() != "{\"error\":\"invalid input or data constraint\"}\n" {
+			t.Fatalf("invalid data must use a fixed generic response: %s", w.Body)
 		}
 		if (tc.code == 503) != (w.Header().Get("Retry-After") != "") {
 			t.Fatalf("Retry-After only on 503: %d %q", w.Code, w.Header().Get("Retry-After"))

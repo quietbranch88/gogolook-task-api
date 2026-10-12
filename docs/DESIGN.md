@@ -55,7 +55,8 @@ It rejects other ledger versions without mutation. Use a fresh database; startup
 ## Error mapping
 
 See [OpenAPI](openapi.yaml) for response codes.
-Connection failures and temporary database rejection return `503` with `Retry-After: 1`; timeouts return `504`.
+Connection refusal, closed pools and temporary database rejection return `503` with `Retry-After: 1`.
+Connection handshake deadlines and request deadlines return `504` without retry advice.
 Unknown failures, including row-decoding errors, return `500` without retry advice.
 
 Public errors contain fixed messages. Normal application logs omit SQL, DSNs, tokens and case contents.
@@ -63,21 +64,16 @@ Storage diagnostics retain SQLSTATE and cause type; requests are not body-logged
 
 ## Verified
 
-| Check | Environment | Result |
-| --- | --- | --- |
-| Full unit and PostgreSQL suite, `-race` | Go 1.26.9/Linux ARM64, PostgreSQL 17.11, OrbStack; runner 2 CPUs/2 GiB | 58 top-level passes, no failures or race reports; one recovery skip. |
-| Real recovery refusal | Disposable standby, race detector | Pass; no skip with recovery opt-in. |
-| Delayed startup handshake | PostgreSQL behind a TCP proxy, race detector | Fails before the fix; passes afterward, including repeated focused runs. |
-| Migration | PostgreSQL, race detector | Pass: fresh/repeated/concurrent runs, rollback/retry, required timestamps and incompatible-version rejection. |
-| Connection and response failures | HTTP and real PostgreSQL | Pass: connection-limit recovery, lost responses, write timeouts and cuts before/after COMMIT. |
-| Sensitive diagnostics | Unit and real PostgreSQL tests | Pass: public errors and normal storage logs redact credentials and database details. |
-| Static and hook checks | Current checkout | Normal/loadtest vet pass; hook regression 5/5 pass. |
-| Image build and HTTP smoke | Final Dockerfile image, isolated PostgreSQL | Build pass; 11 HTTP checks pass, including CRUD, replay, stale version and tombstones. |
+Verified on Linux ARM64 in Docker with Go 1.26.9 and PostgreSQL 17.11. Run the committed checks:
 
-The full run used `go test -race -count=1 -timeout=240s -v ./...`.
-Reproduce it through `docker compose --profile test run --rm tests`; the separate recovery fixture needs explicit opt-in.
-Enable recovery with `RECOVERY_57P03_DATABASE_URL` and `RECOVERY_57P03_ALLOW_DATABASE=tasks_test` against a disposable standby.
-Run `go test -race -count=1 ./internal/integration -run '^TestHTTPPostgresRealRecoveryRefusal$'` with `hot_standby=off`.
+| Command | Coverage | Result |
+| --- | --- | --- |
+| `docker compose --profile test run --rm tests` | Unit, HTTP and real PostgreSQL tests with the race detector. | 60 top-level passes; zero failures or race reports; one recovery skip. |
+| `go vet ./...` and `go vet -tags loadtest ./...` | Default and load-test builds. | Pass; both builds. |
+| `docker compose up --build -d --wait` | Image build, migration, demo seed and API startup. | Pass; API ready after fresh migration and seed. |
+
+The suite covers migration reruns and rollback, authorization, concurrent writes, connection failures and lost responses.
+The real-recovery test skips unless an explicitly guarded standby fixture is supplied; Compose excludes that fixture.
 
 ## Load test
 
@@ -126,6 +122,6 @@ The outbox table and worker are not implemented.
 
 - Paging can miss lower IDs committed after the cursor advances; refresh from the beginning to see them.
 - Unkeyed POST retries can create duplicates; timeouts and disconnects can leave commit outcomes uncertain.
-- Token provisioning is manual; signup and role management are absent.
+- Production token provisioning is manual; [load-test fixtures](../loadtest/README.md#token-mode) issue synthetic credentials. Signup and roles are absent.
 - Demo mode uses one shared identity and rejects non-empty `Authorization` or `X-Tenant-ID` headers.
 - TLS, rate limiting, backups and retention need operational work; failover and restoration remain unverified.
