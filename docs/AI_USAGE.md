@@ -9,7 +9,7 @@ Task status records check completion. The required PUT version is my explicit co
 - Modeled enterprises as tenants and used membership for access. Kept individual task assignment separate.
 - Chose PostgreSQL for transactions and constraints, including future atomic task/outbox writes. Left notification delivery unimplemented.
 - Required PUT versions to prevent overwrites; added POST keys for safe retries. Kept DELETE unconditional.
-- Bounded pages to 100. Used measured fixture sizes and deferred an in-memory adapter rather than expanding scope.
+- Bounded pages to 100. Skipped the in-memory adapter the sheet allows: the guarantees I wanted to show only exist against a real database.
 
 ## What review caught and fixed
 
