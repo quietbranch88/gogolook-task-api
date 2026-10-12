@@ -61,6 +61,10 @@ Stale PUT versions and conflicting creation keys return `409`.
 | Paging | Bound GET to 100 rows; follow `X-Next-After`. |
 | Timestamps | Record creation and update times on the server. |
 
+I chose optimistic locking because investigators may update the same task concurrently.
+I expect that risk to increase as more people join.
+The current load-test target is a first-version baseline; future workloads and design trade-offs can be discussed in the interview.
+
 ## Not done
 
 This implementation omits an in-memory adapter, GET by ID, roles, rate limiting and a metrics exporter.
