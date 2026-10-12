@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+root=$(git rev-parse --show-toplevel)
+if python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+  exec python3 "$root/scripts/pre_commit.py"
+fi
+if python -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+  exec python "$root/scripts/pre_commit.py"
+fi
+if py -3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+  exec py -3 "$root/scripts/pre_commit.py"
+fi
+echo 'pre-commit: Python 3.9+ is required (python3, python, or py -3).' >&2
+exit 1

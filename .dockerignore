@@ -1,0 +1,11 @@
+.git
+.spec
+.env
+*.exe
+# never COPYed by the Dockerfile; excluded only to keep the build context small
+docs
+loadtest
+*.md
+compose.yaml
+.githooks
+scripts

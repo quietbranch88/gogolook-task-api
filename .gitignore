@@ -1,0 +1,6 @@
+.spec/
+.env
+*.exe
+loadtest/tokens.json*
+__pycache__/
+*.pyc

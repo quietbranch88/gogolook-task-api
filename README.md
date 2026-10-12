@@ -8,8 +8,9 @@ I chose investigation checks for a scam-case review platform as the setting; tas
 
 ## Run
 
-Install Docker with Compose v2 and BuildKit. Compose supplies PostgreSQL 17.11 and a shared demo identity.
-Omit authorization and tenant headers in demo mode; running the image separately requires PostgreSQL 17+.
+Install Docker with Compose v2 and BuildKit.
+Compose starts PostgreSQL 17.11 and the API in **demo mode; no Bearer token is needed**.
+Omit `Authorization` and `X-Tenant-ID`; running the image separately requires PostgreSQL 17+.
 ```sh
 docker compose up --build -d --wait
 curl -i http://localhost:8080/readyz # Continue when this returns 200.

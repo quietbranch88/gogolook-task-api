@@ -1,0 +1,485 @@
+openapi: 3.0.3
+info:
+  title: Gogolook task API
+  version: 0.4.0
+  description: |
+    Define the four task endpoints and health probes.
+    Select demo or token authentication through AUTH_MODE.
+    Read DESIGN.md for authorization, concurrency and retry decisions.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local Compose stack (demo mode)
+
+tags:
+  - name: tasks
+    description: The four endpoints required by the exercise.
+  - name: health
+    description: Liveness and readiness probes for container orchestration.
+
+paths:
+  /tasks:
+    get:
+      tags: [tasks]
+      summary: List tasks in the selected tenant
+      description: |
+        Return selected-tenant tasks in ascending ID order; an empty result is [].
+        Return at most 100 rows. Follow X-Next-After using the next after value.
+        Read current committed state for each page.
+        Reject malformed query encoding and unescaped semicolons with 400.
+      operationId: listTasks
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - name: limit
+          in: query
+          required: false
+          description: Page size, 1 to 100. Absent means 100; a present but empty value returns 400.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 100
+          example: 100
+        - name: after
+          in: query
+          required: false
+          description: Return only tasks with id greater than this value. Absent or 0 starts at the beginning; a present but empty value returns 400.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          example: 250
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tasks in ascending id order
+          headers:
+            X-Next-After:
+              description: Present when more rows follow, including the default page; the id to pass as the next `after`.
+              schema:
+                type: integer
+                format: int64
+              example: 350
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+              examples:
+                two:
+                  value: [{"id": 1, "name": "Check phone number", "status": 0, "detail": "", "version": 1, "created_at": "2026-10-12T01:00:00Z", "updated_at": "2026-10-12T01:00:00Z"}, {"id": 2, "name": "Review evidence", "status": 1, "detail": "Call record checked", "version": 1, "created_at": "2026-10-12T01:00:00Z", "updated_at": "2026-10-12T01:05:00Z"}]
+                empty:
+                  value: []
+        '400': { $ref: '#/components/responses/BadRequestList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    post:
+      tags: [tasks]
+      summary: Create a task
+      description: |
+        Scope Idempotency-Key to the authenticated user and selected tenant.
+        Return the same ID and current fields for matching name/status/detail, with 201.
+        Treat omitted, null and empty detail equally when comparing input.
+        Return 409 for changed input or a deleted task. Reauthorize every replay.
+        Retain key/input digests and a nullable task reference without expiry.
+      operationId: createTask
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: One value only; reuse for retries of the same creation. Invalid or empty values return 400.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9._:-]+$'
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/TaskInput'
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+              example: {"id": 1, "name": "Check phone number", "status": 0, "detail": "", "version": 1, "created_at": "2026-10-12T01:00:00Z", "updated_at": "2026-10-12T01:00:00Z"}
+        '400': { $ref: '#/components/responses/BadRequestWrite' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: The key was used for different input or a task that was deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: {"error": "idempotency key was used for different input or a deleted task"}
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+        '504': { $ref: '#/components/responses/Timeout' }
+
+  /tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    put:
+      tags: [tasks]
+      summary: Replace a task's name, status and detail
+      description: Full replacement of name, status and detail. Omitted detail becomes empty. Match the required positive version atomically; increment it on success, or return 409 for a stale version. No partial update or upsert.
+      operationId: replaceTask
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        $ref: '#/components/requestBodies/TaskUpdate'
+      responses:
+        '200':
+          description: Task after replacement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+              example: {"id": 1, "name": "Review evidence", "status": 1, "detail": "", "version": 2, "created_at": "2026-10-12T01:00:00Z", "updated_at": "2026-10-12T01:05:00Z"}
+        '400': { $ref: '#/components/responses/BadRequestWrite' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Stale version; task was not modified. Read current state and reconcile. A lost earlier response can also lead to this result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: {"error": "task version conflict; read current task before retrying"}
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+        '504': { $ref: '#/components/responses/Timeout' }
+    delete:
+      tags: [tasks]
+      summary: Delete a task
+      description: Removes the row. The task disappears from subsequent lists; a second DELETE of the same id answers 404.
+      operationId: deleteTask
+      parameters:
+        - $ref: '#/components/parameters/TenantID'
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted; empty body
+        '400': { $ref: '#/components/responses/BadRequestIdentity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/Internal' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+        '504': { $ref: '#/components/responses/Timeout' }
+
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness
+      description: Answers 200 whenever the process is serving HTTP. Does not touch the database.
+      operationId: healthz
+      security: [{}]
+      responses:
+        '200':
+          description: Process is alive; empty body
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness
+      description: Pings PostgreSQL with a 2-second timeout; a failed or timed-out ping answers 503.
+      operationId: readyz
+      security: [{}]
+      responses:
+        '200':
+          description: Database reachable; empty body
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Token mode only. An opaque token of 32 to 256 bytes issued through the
+        operator path; the server stores only its SHA-256 digest with expiry and
+        revocation timestamps. Must be combined with `X-Tenant-ID`.
+
+  parameters:
+    TenantID:
+      name: X-Tenant-ID
+      in: header
+      description: |
+        Token mode: required, positive integer id of the tenant to act in; the
+        authenticated user must be a member of it (otherwise 403). Demo mode:
+        omit the header or send an empty value; non-empty values return 400.
+      required: false
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      example: 101
+    TaskID:
+      name: id
+      in: path
+      required: true
+      description: Positive integer task id as returned by POST. Non-numeric, zero, negative or int64-overflowing values answer 400.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      example: 1
+
+  requestBodies:
+    TaskUpdate:
+      required: true
+      description: Full replacement with required positive expected version. Missing/null/invalid versions return 400. Same JSON and size rules as TaskInput.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TaskUpdate'
+          example: {"name": "Review evidence", "status": 1, "version": 1}
+    TaskInput:
+      required: true
+      description: |
+        Exactly one JSON object with `Content-Type: application/json`; a
+        missing or different Content-Type answers 415. Arrays, trailing content,
+        malformed JSON and unknown members answer 400; a bare `null` body answers
+        400 ("name and status are required"). Bodies over 16 KiB answer 413.
+        Decoded member names must exactly match lowercase schema names; case
+        variants are rejected, while JSON escapes that decode to a valid name
+        are accepted. Valid duplicate members retain last-value behavior.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TaskInput'
+          examples:
+            incomplete:
+              value: {"name": "Check phone number", "status": 0}
+            complete:
+              value: {"name": "Review evidence", "status": 1}
+            withDetail:
+              value: {"name": "Check phone number", "status": 0, "detail": "Compare the number with the case report"}
+
+  schemas:
+    Task:
+      type: object
+      required: [id, name, status, detail, version, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Database-owned creation time, returned in UTC and preserved on update.
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Database-owned last change time, returned in UTC. Equal to created_at on creation and set on every successful PUT. Not a strict ordering or concurrency token.
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Starts at 1; incremented by each successful PUT.
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Database-generated. Not guaranteed to be contiguous.
+        name:
+          type: string
+          description: Task name, preserved exactly as submitted.
+        status:
+          type: integer
+          enum: [0, 1]
+          description: 0 = incomplete, 1 = completed.
+        detail:
+          type: string
+          maxLength: 10000
+          description: Free-text detail, preserved exactly as submitted; empty string when none was given.
+    TaskInput:
+      type: object
+      required: [name, status]
+      additionalProperties: false
+      description: |
+        Accept only name, status and detail. Unknown members return 400.
+        The server generates the task ID.
+      properties:
+        detail:
+          type: string
+          maxLength: 10000
+          nullable: true
+          description: |
+            Optional. Absent or null means empty. Up to 10000 Unicode characters;
+            whitespace-only is allowed; NUL and invalid UTF-8 are rejected. PUT
+            replaces it: omitting detail on PUT clears it.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: |
+            1 to 1000 Unicode characters (code points, not bytes) and at least
+            one non-whitespace character. Surrounding whitespace is preserved.
+            NUL bytes and invalid UTF-8 are rejected.
+        status:
+          type: integer
+          enum: [0, 1]
+          description: Must be exactly the JSON integer 0 or 1. Missing, null, "0", 1.0, 2 and -1 are rejected.
+    TaskUpdate:
+      type: object
+      required: [name, status, version]
+      additionalProperties: false
+      description: |
+        Accept only name, status, detail and version. Unknown members return 400.
+        The task ID comes from the path.
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Required version from the task that was read; stale versions return 409.
+        detail:
+          type: string
+          maxLength: 10000
+          nullable: true
+          description: |
+            Optional. Absent or null means empty. Up to 10000 Unicode characters;
+            whitespace-only is allowed; NUL and invalid UTF-8 are rejected. PUT
+            replaces it: omitting detail on PUT clears it.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: |
+            1 to 1000 Unicode characters (code points, not bytes) and at least
+            one non-whitespace character. Surrounding whitespace is preserved.
+            NUL bytes and invalid UTF-8 are rejected.
+        status:
+          type: integer
+          enum: [0, 1]
+          description: Must be exactly the JSON integer 0 or 1. Missing, null, "0", 1.0, 2 and -1 are rejected.
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          description: Safe, fixed message. Never contains SQL, connection strings, tokens or task contents.
+      example: {"error": "task not found"}
+
+  responses:
+    BadRequestIdentity:
+      description: |
+        Non-empty `Authorization` or `X-Tenant-ID` in demo mode; `X-Tenant-ID`
+        missing, non-numeric or not positive in token mode; or, on `/tasks/{id}`
+        only, a path id that is not a positive int64.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            demoHeader: { value: {"error": "demo mode uses a fixed identity"} }
+            tenant: { value: {"error": "positive X-Tenant-ID required"} }
+            id: { value: {"error": "positive task id required"} }
+    BadRequestList:
+      description: |
+        Everything in BadRequestIdentity, plus `limit` outside 1–100 or not an
+        integer, `after` negative or not an integer, malformed percent encoding
+        or an unescaped query semicolon.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            encoding: { value: {"error": "query must use valid URL encoding"} }
+            limit: { value: {"error": "limit must be an integer from 1 to 100"} }
+            after: { value: {"error": "after must be a non-negative integer task id"} }
+    BadRequestWrite:
+      description: |
+        Everything in BadRequestIdentity, plus a body that is not a single JSON
+        object with both required fields, a member outside the endpoint schema, missing/invalid PUT version or supplied POST version,
+        a `name`/`status`/`detail` value outside the contract, or a value the
+        database's CHECK constraints reject.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            body: { value: {"error": "body must be one JSON object with only name, status, detail and (on PUT) version"} }
+            missing: { value: {"error": "name and status are required"} }
+            invalid: { value: {"error": "name must contain 1-1000 nonblank characters, status must be 0 or 1, detail at most 10000 characters"} }
+    Unauthorized:
+      description: |
+        Token mode: no `Authorization: Bearer` header, wrong scheme, token
+        outside 32–256 bytes, or a token that is unknown, expired or
+        revoked.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          example: Bearer realm="tasks"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            header: { value: {"error": "valid bearer token required"} }
+            token: { value: {"error": "invalid credentials"} }
+    Forbidden:
+      description: The token is valid but the user is not a member of the selected tenant.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "membership required"}
+    NotFound:
+      description: No task with that id exists in the selected tenant. Ids that belong to another tenant answer the same way; existence is not disclosed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "task not found"}
+    TooLarge:
+      description: Request body larger than 16 KiB.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "request body too large"}
+    UnsupportedMedia:
+      description: "POST/PUT without `Content-Type: application/json` (missing or different). `curl -d` without `-H` sends form-urlencoded and gets this."
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "Content-Type: application/json is required"}
+    Timeout:
+      description: The request exceeded its 5-second storage budget, or PostgreSQL reported an idle-in-transaction or transaction timeout (25P03 or 25P04).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "request timed out"}
+    Internal:
+      description: Unexpected server or storage failure; return a fixed public message and bounded diagnostic.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "internal error"}
+    Unavailable:
+      description: Storage unreachable (connection failure, closed pool). Retrying after `Retry-After` can succeed.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          example: 1
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: {"error": "service unavailable"}
