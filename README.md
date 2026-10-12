@@ -50,6 +50,24 @@ Keep the encoded JSON body within 48 KiB. Missing/non-JSON Content-Type returns 
 
 Stale PUT versions and conflicting creation keys return `409`.
 
+## Where this fits
+
+The target system is a scam-case review platform. Each enterprise is a tenant, and its investigators are its members. A case holds many investigation checks; this API is the check layer.
+
+```mermaid
+flowchart LR
+  subgraph Built
+    T[Tenant and membership] --> K[Investigation checks: this API]
+  end
+  subgraph Later
+    C[Cases] --> K
+    E[Evidence storage]
+    O[Outbox worker] --> N[Notifications]
+    F[Fraud decision service]
+  end
+  K -- same transaction --> O
+```
+
 ## What I added, and why
 
 | Addition | Reason |
