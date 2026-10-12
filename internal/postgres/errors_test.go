@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -44,6 +45,7 @@ func TestClassify(t *testing.T) {
 		{"other server errors stay permanent", syntax, nil},
 		{"connection failures are unavailable", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, task.ErrUnavailable},
 		{"driver connect error is unavailable", driverConnectError(t, syscall.ECONNREFUSED), task.ErrUnavailable},
+		{"driver connection deadline is a timeout", driverConnectTimeout(t), task.ErrTimeout},
 		{"closed pool is unavailable", puddle.ErrClosedPool, task.ErrUnavailable},
 		{"wrapped closed pool is unavailable", fmt.Errorf("acquire: %w", puddle.ErrClosedPool), task.ErrUnavailable},
 		{"closed driver connection is unavailable", pgconn.ErrConnClosed, task.ErrUnavailable},
@@ -164,6 +166,8 @@ func TestStorageFailureHTTPDiagnostics(t *testing.T) {
 		{"permanent", &pgconn.PgError{Code: "28P01", Message: "secret", Detail: "private"}, 500, "internal error", "SQLSTATE 28P01", true},
 		{"retryable", &pgconn.PgError{Code: "53300", Message: "secret", Detail: "private"}, 503, "service unavailable", "SQLSTATE 53300", true},
 		{"deadline", fmt.Errorf("secret: %w", context.DeadlineExceeded), 504, "request timed out", "deadline exceeded", true},
+		{"driver connection timeout", driverConnectTimeout(t), 504, "request timed out", "deadline exceeded", false},
+		{"driver connection refusal", syscall.ECONNREFUSED, 503, "service unavailable", "connection refused", true},
 		{"idle transaction timeout", &pgconn.PgError{Code: "25P03", Message: "secret", Detail: "private"}, 504, "request timed out", "SQLSTATE 25P03", true},
 		{"transaction timeout", &pgconn.PgError{Code: "25P04", Message: "secret", Detail: "private"}, 504, "request timed out", "SQLSTATE 25P04", true},
 		{"failed transaction", &pgconn.PgError{Code: "25P02", Message: "secret", Detail: "private"}, 500, "internal error", "SQLSTATE 25P02", true},
@@ -231,6 +235,30 @@ func driverConnectError(t *testing.T, cause error) error {
 	var connectErr *pgconn.ConnectError
 	if !errors.As(err, &connectErr) || !errors.Is(err, cause) {
 		t.Fatalf("expected driver ConnectError preserving the cause, got %v", err)
+	}
+	return err
+}
+
+// Let pgconn create and expire its own connection deadline. The caller's
+// context remains live, so the error comes from ConnectTimeout rather than
+// an expired request context or a fabricated wrapper.
+func driverConnectTimeout(t *testing.T) error {
+	t.Helper()
+	config, err := pgconn.ParseConfig("host=127.0.0.1 user=test password=secret dbname=private sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnectTimeout = 10 * time.Millisecond
+	config.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	caller, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err = pgconn.ConnectConfig(caller, config)
+	var connectErr *pgconn.ConnectError
+	if caller.Err() != nil || !errors.As(err, &connectErr) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a driver connection deadline with a live caller, got %v; caller=%v", err, caller.Err())
 	}
 	return err
 }

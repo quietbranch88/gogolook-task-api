@@ -214,9 +214,9 @@ components:
       type: http
       scheme: bearer
       description: |
-        Token mode only. An opaque token of 32 to 256 bytes issued through the
-        operator path; the server stores only its SHA-256 digest with expiry and
-        revocation timestamps. Must be combined with `X-Tenant-ID`.
+        Token mode only. An opaque token of 32 to 256 bytes; combine it with
+        `X-Tenant-ID`. Store only its SHA-256 digest with expiry and revocation.
+        Use the loadtest-tagged seed-load command for synthetic test credentials.
 
   parameters:
     TenantID:
@@ -258,7 +258,7 @@ components:
         Exactly one JSON object with `Content-Type: application/json`; a
         missing or different Content-Type answers 415. Arrays, trailing content,
         malformed JSON and unknown members answer 400; a bare `null` body answers
-        400 ("name and status are required"). Bodies over 16 KiB answer 413.
+        400 ("name and status are required"). Bodies over 48 KiB answer 413.
         Decoded member names must exactly match lowercase schema names; case
         variants are rejected, while JSON escapes that decode to a valid name
         are accepted. Valid duplicate members retain last-value behavior.
@@ -412,14 +412,14 @@ components:
         Everything in BadRequestIdentity, plus a body that is not a single JSON
         object with both required fields, a member outside the endpoint schema, missing/invalid PUT version or supplied POST version,
         a `name`/`status`/`detail` value outside the contract, or a value the
-        database's CHECK constraints reject.
+        database's input or integrity constraints reject.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
           examples:
             body: { value: {"error": "body must be one JSON object with only name, status, detail and (on PUT) version"} }
             missing: { value: {"error": "name and status are required"} }
-            invalid: { value: {"error": "name must contain 1-1000 nonblank characters, status must be 0 or 1, detail at most 10000 characters"} }
+            invalid: { value: {"error": "invalid input or data constraint"} }
     Unauthorized:
       description: |
         Token mode: no `Authorization: Bearer` header, wrong scheme, token
@@ -449,7 +449,7 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
           example: {"error": "task not found"}
     TooLarge:
-      description: Request body larger than 16 KiB.
+      description: Request body larger than 48 KiB.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -461,7 +461,7 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
           example: {"error": "Content-Type: application/json is required"}
     Timeout:
-      description: The request exceeded its 5-second storage budget, or PostgreSQL reported an idle-in-transaction or transaction timeout (25P03 or 25P04).
+      description: A connection handshake exceeded its 2-second deadline, the request exceeded its 5-second storage budget, or PostgreSQL reported an idle-in-transaction or transaction timeout (25P03 or 25P04). No Retry-After header is sent.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -473,7 +473,7 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
           example: {"error": "internal error"}
     Unavailable:
-      description: Storage unreachable (connection failure, closed pool). Retrying after `Retry-After` can succeed.
+      description: Storage unavailable due to connection refusal, a closed pool or temporary PostgreSQL rejection. Connection deadline expiry returns 504. Retrying after `Retry-After` can succeed.
       headers:
         Retry-After:
           schema:

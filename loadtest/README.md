@@ -2,12 +2,26 @@
 
 `k6.js` runs mixed task traffic with fixed-rate, tenant-skew and exploratory ramp scenarios. You need [k6](https://k6.io), Python and jq, and a running API in token mode with the load fixture. Measurements and environment details are in [Design](../docs/DESIGN.md#load-test).
 
+## Token mode
+
+Use a disposable local database and free port 8080; stop the Compose API first.
+The tagged seeder creates synthetic tenants, users, tasks and seven-day bearer tokens.
+The normal binary has no key-issuance command. Install Go 1.26.9 to run the fixture.
+
 ```sh
 export DATABASE_URL=postgres://user:pass@127.0.0.1:5432/tasks?sslmode=disable   # a local database you own
 go run ./cmd/api migrate
 go run -tags loadtest ./cmd/api seed-load > loadtest/tokens.jsonl   # 20 tenants x 3000 tasks, one token each
 python3 -c "import json,sys; print(json.dumps([json.loads(l) for l in open('loadtest/tokens.jsonl')]))" > loadtest/tokens.json
-PPROF_ADDR=127.0.0.1:6060 go run ./cmd/api &                        # token mode; diagnostics for pool stats and profiles
+AUTH_MODE=token PPROF_ADDR=127.0.0.1:6060 go run ./cmd/api &                        # token mode; diagnostics for pool stats and profiles
+for attempt in $(seq 1 60); do
+  curl -fsS --max-time 3 http://localhost:8080/readyz >/dev/null && break
+  sleep 1
+done
+curl -fsS --max-time 3 http://localhost:8080/readyz >/dev/null || exit 1
+TOKEN=$(jq -r '.token' loadtest/tokens.jsonl | head -n 1)
+TENANT=$(jq -r '.tenant' loadtest/tokens.jsonl | head -n 1)
+curl -i http://localhost:8080/tasks -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT"
 cd loadtest
 k6 run -e MODE=slo -e LIMIT=100 k6.js        # 50 iterations/s for 60 s, paged list
 k6 run -e MODE=slo k6.js                     # default-page comparison: omitted LIMIT means 100 rows

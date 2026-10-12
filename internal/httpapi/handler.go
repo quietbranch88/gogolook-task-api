@@ -184,7 +184,7 @@ func decodePage(w http.ResponseWriter, r *http.Request) (task.Page, bool) {
 // when it is missing, because curl -d sends form-urlencoded and a silent guess
 // would hide that), and the object may contain only name, status, detail and (on PUT) version
 // (400 otherwise, so a misspelled field is caught instead of being dropped).
-// Exactly one JSON object, no trailing content, 16 KiB cap, name and status
+// Exactly one JSON object, no trailing content, 48 KiB cap, name and status
 // required. README shows the exact curl invocation.
 func decodeInput(w http.ResponseWriter, r *http.Request) (task.Input, bool) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -192,7 +192,7 @@ func decodeInput(w http.ResponseWriter, r *http.Request) (task.Input, bool) {
 		publicError(w, 415, "Content-Type: application/json is required")
 		return task.Input{}, false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 48<<10)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -267,7 +267,7 @@ func decodeInput(w http.ResponseWriter, r *http.Request) (task.Input, bool) {
 func handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, task.ErrInvalid):
-		publicError(w, 400, fmt.Sprintf("name must contain 1-%d nonblank characters, status must be 0 or 1, detail at most %d characters", task.MaxNameLength, task.MaxDetailLength))
+		publicError(w, 400, "invalid input or data constraint")
 	case errors.Is(err, task.ErrUnauthorized):
 		publicError(w, 401, "invalid credentials")
 	case errors.Is(err, task.ErrForbidden):

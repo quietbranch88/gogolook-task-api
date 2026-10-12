@@ -21,8 +21,8 @@ import (
 // compiled only with `-tags loadtest`, so the shipped binary and image do not
 // contain a command that prints credentials. Fixture:
 // SEED_LOAD_TENANTS tenants (default 20), one user and one 7-day bearer token
-// each, and SEED_LOAD_TASKS tasks per tenant (default 3000, the plan's 30-day
-// accumulation). Tokens are printed once as JSON lines for the load generator;
+// each, and SEED_LOAD_TASKS tasks per tenant (default 3000).
+// Tokens are printed once as JSON lines for the load generator;
 // only their SHA-256 digests are stored. Local load fixtures only.
 func seedLoad(ctx context.Context, pool *pgxpool.Pool) error {
 	tenants, err := envInt("SEED_LOAD_TENANTS", 20, 1, 1000)
