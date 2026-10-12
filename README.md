@@ -61,12 +61,22 @@ flowchart LR
   end
   subgraph Later
     C[Cases] --> K
-    E[Evidence storage]
+    C --> E[Evidence storage]
+    K --> F[Fraud decision service]
     O[Outbox worker] --> N[Notifications]
-    F[Fraud decision service]
   end
   K -- same transaction --> O
 ```
+
+I built first what is expensive to retrofit: tenant isolation in every query, optimistic locking, retry-safe creation and database-owned timestamps. Cases, evidence, notifications and fraud decisions are cheap to add on top, so they are deferred. PostgreSQL is chosen now because the planned outbox needs a task change and its event in one transaction.
+
+## Scope
+
+The assignment asks for four endpoints and allows in-memory storage. I deliberately went further to show correctness under concurrency and failure: transactions, tenant isolation, optimistic locking and retry-safe creation, each tested against real PostgreSQL. The cost is a heavier setup, four Compose services, and a PUT that differs from the sheet.
+
+With half a day I would ship the four endpoints, PostgreSQL, the version check and one real-database test suite. I would cut tenants and tokens first, then idempotency keys, the load test and the pre-commit hooks.
+
+A gentler alternative to the required body `version` is an optional `If-Match` header, which keeps the sheet's PUT working. I would make that change before any real client depended on the API.
 
 ## What I added, and why
 
@@ -78,10 +88,6 @@ flowchart LR
 | POST Idempotency-Key | Reuse a key and matching input to retry one creation. |
 | Paging | Bound GET to 100 rows; follow `X-Next-After`. |
 | Timestamps | Record creation and update times on the server. |
-
-I chose optimistic locking because investigators may update the same task concurrently.
-I expect that risk to increase as more people join.
-The current load-test target is a first-version baseline; future workloads and design trade-offs can be discussed in the interview.
 
 ## Not done
 
